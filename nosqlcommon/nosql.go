@@ -1,5 +1,0 @@
-package nosqlcommon
-
-func New() {
-
-}

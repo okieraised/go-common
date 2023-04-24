@@ -1,0 +1,5 @@
+package nosql
+
+func New() {
+
+}
