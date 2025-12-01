@@ -21,7 +21,12 @@ func ReadAll(fh *multipart.FileHeader) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func(file multipart.File) {
+		cErr := file.Close()
+		if cErr != nil && err == nil {
+			err = cErr
+		}
+	}(file)
 	return io.ReadAll(file)
 }
 
@@ -38,7 +43,12 @@ func ReadChunked(fh *multipart.FileHeader, bufSize int, fn func([]byte) error) e
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func(file multipart.File) {
+		cErr := file.Close()
+		if cErr != nil && err == nil {
+			err = cErr
+		}
+	}(file)
 
 	buf := make([]byte, bufSize)
 	for {
@@ -70,13 +80,23 @@ func SaveTo(fh *multipart.FileHeader, dstPath string, perm os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	defer func(src multipart.File) {
+		cErr := src.Close()
+		if cErr != nil && err == nil {
+			err = cErr
+		}
+	}(src)
 
 	out, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func(out *os.File) {
+		cErr := out.Close()
+		if cErr != nil && err == nil {
+			err = cErr
+		}
+	}(out)
 
 	_, err = io.Copy(out, src)
 	return err
@@ -104,7 +124,12 @@ func DetectContentType(fh *multipart.FileHeader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func(file multipart.File) {
+		cErr := file.Close()
+		if cErr != nil && err == nil {
+			err = cErr
+		}
+	}(file)
 
 	buf := make([]byte, 512)
 	n, _ := file.Read(buf)
@@ -132,15 +157,20 @@ func OpenAndDetect(fh *multipart.FileHeader) (io.ReadCloser, string, error) {
 	// Create a reader that replays buf[:n] then the rest of file
 	pr, pw := io.Pipe()
 	go func() {
-		defer file.Close()
+		defer func(file multipart.File) {
+			cErr := file.Close()
+			if cErr != nil && err == nil {
+				err = cErr
+			}
+		}(file)
 		if n > 0 {
 			if _, err := pw.Write(buf[:n]); err != nil {
-				pw.CloseWithError(err)
+				_ = pw.CloseWithError(err)
 				return
 			}
 		}
 		_, err := io.Copy(pw, file)
-		pw.CloseWithError(err)
+		_ = pw.CloseWithError(err)
 	}()
 	return pr, ct, nil
 }
@@ -173,7 +203,7 @@ func SanitizeFilename(name string) string {
 	return name
 }
 
-// ValidateMaxSize checks if file size is within maxBytes.
+// ValidateMaxSize checks if the file size is within maxBytes.
 func ValidateMaxSize(fh *multipart.FileHeader, maxBytes int64) error {
 	if fh == nil {
 		return errors.New("nil file header")

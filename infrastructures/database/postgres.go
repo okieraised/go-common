@@ -3,149 +3,187 @@ package database
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 
-	"github.com/okieraised/go-common/cerrors"
+	"github.com/okieraised/go-common/config"
+	"github.com/okieraised/go-common/constants"
+	"github.com/okieraised/go-common/infrastructures/logging"
+	"github.com/pkg/errors"
+	"github.com/spf13/viper"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
 )
 
-// Config defines connection + pool settings for Postgres.
-type Config struct {
-	Host     string
-	Port     int
-	DBName   string
-	User     string
-	Password string
-
-	Secure    bool
-	TLSConfig *tls.Config
-
-	Timeout      time.Duration
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-
-	MaxIdleConns    int
-	MaxOpenConns    int
-	ConnMaxLifetime time.Duration
-	ConnMaxIdleTime time.Duration
-
-	PingTimeout    time.Duration
-	PingRetries    int
-	PingBackoff    time.Duration
-	PingBackoffMax time.Duration
+type TLSConfig struct {
+	EnableTLS       bool
+	CAFile          string
+	ClientCertFile  string
+	ClientKeyFile   string
+	InsecureSkipTLS bool
 }
 
-// withDefaults applies sane defaults if fields are zero.
-func (c *Config) withDefaults() *Config {
-	if c.Port == 0 {
-		c.Port = 5432
-	}
-	if c.Timeout == 0 {
-		c.Timeout = 5 * time.Second
-	}
-	if c.ReadTimeout == 0 {
-		c.ReadTimeout = 3 * time.Second
-	}
-	if c.WriteTimeout == 0 {
-		c.WriteTimeout = 3 * time.Second
-	}
-	if c.MaxIdleConns == 0 {
-		c.MaxIdleConns = 10
-	}
-	if c.MaxOpenConns == 0 {
-		c.MaxOpenConns = 50
-	}
-	if c.ConnMaxLifetime == 0 {
-		c.ConnMaxLifetime = 30 * time.Minute
-	}
-	if c.ConnMaxIdleTime == 0 {
-		c.ConnMaxIdleTime = 5 * time.Minute
-	}
-	if c.PingTimeout == 0 {
-		c.PingTimeout = 2 * time.Second
-	}
-	if c.PingRetries == 0 {
-		c.PingRetries = 3
-	}
-	if c.PingBackoff == 0 {
-		c.PingBackoff = 300 * time.Millisecond
-	}
-	if c.PingBackoffMax == 0 {
-		c.PingBackoffMax = 2 * time.Second
-	}
-	return c
+type RetryConfig struct {
+	MaxRetries int
+	Interval   time.Duration
+	MaxBackoff time.Duration
 }
 
-// NewPostgresClient returns a ready-to-use bun.DB with health-checked connection.
-func NewPostgresClient(cfg *Config) (*bun.DB, error) {
-	cfg = cfg.withDefaults()
+func BuildTLSConfig(cfg *TLSConfig) (*tls.Config, error) {
+	tlsConfig := &tls.Config{}
 
-	if cfg.Host == "" || cfg.User == "" || cfg.Password == "" || cfg.DBName == "" {
-		return nil, cerrors.ErrRequiredConnectionParamsAreEmpty
-	}
-
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-
-	opts := []pgdriver.Option{
-		pgdriver.WithNetwork("tcp"),
-		pgdriver.WithAddr(addr),
-		pgdriver.WithUser(cfg.User),
-		pgdriver.WithPassword(cfg.Password),
-		pgdriver.WithDatabase(cfg.DBName),
-		pgdriver.WithTimeout(cfg.Timeout),
-		pgdriver.WithReadTimeout(cfg.ReadTimeout),
-		pgdriver.WithWriteTimeout(cfg.WriteTimeout),
-	}
-
-	if cfg.Secure {
-		if cfg.TLSConfig != nil {
-			opts = append(opts, pgdriver.WithTLSConfig(cfg.TLSConfig))
-		} else {
-			opts = append(opts, pgdriver.WithTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12}))
+	if cfg.CAFile != "" {
+		caPem, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA file: %w", err)
 		}
-	} else {
-		opts = append(opts, pgdriver.WithInsecure(true))
+		caPool := x509.NewCertPool()
+		if !caPool.AppendCertsFromPEM(caPem) {
+			return nil, errors.New("failed to load CA certificate")
+		}
+		tlsConfig.RootCAs = caPool
 	}
 
-	conn := pgdriver.NewConnector(opts...)
-	sqlDB := sql.OpenDB(conn)
+	if cfg.ClientCertFile != "" && cfg.ClientKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.ClientCertFile, cfg.ClientKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
 
-	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
-	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
-	sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
-	sqlDB.SetConnMaxIdleTime(cfg.ConnMaxIdleTime)
+	tlsConfig.InsecureSkipVerify = cfg.InsecureSkipTLS
+	return tlsConfig, nil
+}
+
+func retryConnect(db *bun.DB, cfg *RetryConfig) error {
+	if cfg.MaxRetries <= 0 {
+		cfg.MaxRetries = 5
+	}
+	if cfg.Interval <= 0 {
+		cfg.Interval = 2 * time.Second
+	}
+	if cfg.MaxBackoff <= 0 {
+		cfg.MaxBackoff = 30 * time.Second
+	}
+
+	backoff := cfg.Interval
+
+	for attempt := 1; attempt <= cfg.MaxRetries; attempt++ {
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := db.PingContext(ctx)
+		cancel()
+
+		if err == nil {
+			return nil // success
+		}
+
+		logging.GetDefault().Info(fmt.Sprintf("Postgres connection failed (attempt %d/%d): %v", attempt, cfg.MaxRetries, err))
+		if attempt == cfg.MaxRetries {
+			return err
+		}
+
+		time.Sleep(backoff)
+		backoff *= 2
+		if backoff > cfg.MaxBackoff {
+			backoff = cfg.MaxBackoff
+		}
+	}
+
+	return errors.New("unreachable: retry logic failed")
+}
+
+func NewPostgresClient(
+	host, port, dbname, userName, password string,
+	tlsCfg *TLSConfig,
+	retryCfg *RetryConfig,
+) (*bun.DB, error) {
+
+	logger := logging.GetDefault()
+	logger.Info("Initializing postgres client...")
+
+	if host == "" || userName == "" || password == "" || dbname == "" {
+		return nil, errors.New("postgres init error: missing required fields")
+	}
+
+	getDuration := func(key string, fallback time.Duration) time.Duration {
+		if v := viper.GetDuration(key); v > 0 {
+			return v
+		}
+		return fallback
+	}
+
+	getInt := func(key string, fallback int) int {
+		if v := viper.GetInt(key); v > 0 {
+			return v
+		}
+		return fallback
+	}
+
+	dbTimeout := getDuration(config.DatabaseTimeout, constants.DefaultDBTimeout)
+	dbReadTimeout := getDuration(config.DatabaseReadTimeout, constants.DefaultDBReadTimeout)
+	dbWriteTimeout := getDuration(config.DatabaseWriteTimeout, constants.DefaultDBWriteTimeout)
+	dbMaxIdleConn := getInt(config.DatabaseMaxIdleConn, constants.DefaultDBMaxIdleConn)
+	dbMaxOpenConn := getInt(config.DatabaseMaxOpenConn, constants.DefaultDBMaxOpenConn)
+	dbConnMaxLifetime := getDuration(config.DatabaseConnMaxLifetime, constants.DefaultDBConnMaxLifetime)
+	dbConnMaxIdleTime := getDuration(config.DatabaseConnMaxIdleTime, constants.DefaultDBConnMaxIdleTime)
+
+	connectorOpts := []pgdriver.Option{
+		pgdriver.WithNetwork("tcp"),
+		pgdriver.WithAddr(fmt.Sprintf("%s:%s", host, port)),
+		pgdriver.WithUser(userName),
+		pgdriver.WithPassword(password),
+		pgdriver.WithDatabase(dbname),
+		pgdriver.WithTimeout(dbTimeout),
+		pgdriver.WithReadTimeout(dbReadTimeout),
+		pgdriver.WithWriteTimeout(dbWriteTimeout),
+	}
+
+	var tlsConfig *tls.Config
+	var err error
+
+	if tlsCfg != nil {
+		if tlsCfg.EnableTLS {
+			tlsConfig, err = BuildTLSConfig(tlsCfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to build TLS config: %w", err)
+			}
+		}
+		if tlsCfg.EnableTLS {
+			connectorOpts = append(connectorOpts, pgdriver.WithTLSConfig(tlsConfig))
+		} else {
+			connectorOpts = append(connectorOpts, pgdriver.WithInsecure(true))
+		}
+	}
+
+	pgConnector := pgdriver.NewConnector(connectorOpts...)
+	sqlDB := sql.OpenDB(pgConnector)
+
+	sqlDB.SetMaxIdleConns(dbMaxIdleConn)
+	sqlDB.SetMaxOpenConns(dbMaxOpenConn)
+	sqlDB.SetConnMaxIdleTime(dbConnMaxIdleTime)
+	sqlDB.SetConnMaxLifetime(dbConnMaxLifetime)
 
 	db := bun.NewDB(sqlDB, pgdialect.New())
 
-	backoff := cfg.PingBackoff
-	for attempt := 0; attempt < cfg.PingRetries; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.PingTimeout)
+	if retryCfg != nil {
+		if err := retryConnect(db, retryCfg); err != nil {
+			return nil, fmt.Errorf("failed to connect to postgres after retries: %w", err)
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		err := db.PingContext(ctx)
 		cancel()
-		if err == nil {
-			return db, nil
-		}
-		if attempt == cfg.PingRetries-1 {
-			_ = sqlDB.Close()
-			return nil, fmt.Errorf("postgres ping failed after %d attempts: %w", cfg.PingRetries, err)
-		}
-		time.Sleep(backoff)
-		backoff *= 2
-		if backoff > cfg.PingBackoffMax {
-			backoff = cfg.PingBackoffMax
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to postgres: %w", err)
 		}
 	}
-	return db, nil
-}
 
-// ClosePostgres cleanly closes the underlying sql.DB.
-func ClosePostgres(db *bun.DB) error {
-	if db == nil {
-		return nil
-	}
-	return db.DB.Close()
+	logger.Info("postgres client initialized successfully")
+	return db, nil
 }

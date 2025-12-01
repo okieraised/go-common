@@ -1,4 +1,4 @@
-package log
+package logging
 
 import (
 	"fmt"
@@ -43,13 +43,13 @@ func InitDefault(opts ...zap.Option) error {
 // MustInitDefault is like InitDefault, but exits the process on failure.
 func MustInitDefault(opts ...zap.Option) {
 	if err := InitDefault(opts...); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize default logger: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize default logger: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// Get returns the default logger, initializing it if needed.
-func Get() *Logger {
+// GetDefault returns the default logger, initializing it if needed.
+func GetDefault() *Logger {
 	if defaultLogger == nil {
 		_ = InitDefault()
 	}

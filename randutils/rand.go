@@ -13,13 +13,15 @@ import (
 )
 
 var (
-	ErrEmptyAlphabet  = errors.New("alphabet must not be empty")
-	ErrNonPositiveK   = errors.New("k must be > 0")
-	ErrKExceedsLength = errors.New("k exceeds input length")
-	ErrNoChoices      = errors.New("no choices")
-	ErrNonPositiveSum = errors.New("sum of weights must be > 0")
-	ErrNegativeWeight = errors.New("weights must be >= 0")
-	ErrInvalidRange   = errors.New("invalid range")
+	ErrWeightsLenMismatch = errors.New("items and weights length mismatch")
+	ErrNonPositiveWeight  = errors.New("all weights must be > 0")
+	ErrEmptyAlphabet      = errors.New("alphabet must not be empty")
+	ErrNonPositiveK       = errors.New("k must be > 0")
+	ErrKExceedsLength     = errors.New("k exceeds input length")
+	ErrNoChoices          = errors.New("no choices")
+	ErrNonPositiveSum     = errors.New("sum of weights must be > 0")
+	ErrNegativeWeight     = errors.New("weights must be >= 0")
+	ErrInvalidRange       = errors.New("invalid range")
 )
 
 // rngUint64 returns a random uint64 from an io.Reader (usually crypto/rand.Reader).
@@ -36,7 +38,7 @@ func RandIntRange(r *mrand.Rand, min, max int) (int, error) {
 	if max < min {
 		return 0, ErrInvalidRange
 	}
-	// NOTE: handle full range & single-value fast paths
+	// NOTE: handle full range and single-value fast paths
 	if max == min {
 		return min, nil
 	}
@@ -197,7 +199,7 @@ func (res *Reservoir[T]) Add(x T) {
 		res.Buf = append(res.Buf, x)
 		return
 	}
-	// Replace with probability K/N
+	// Replace it with probability K/N
 	j := res.R.Intn(res.N)
 	if j < res.K {
 		res.Buf[j] = x
@@ -274,11 +276,6 @@ func CryptoString(n int, alphabet string) (string, error) {
 	return string(out), nil
 }
 
-var (
-	ErrWeightsLenMismatch = errors.New("items and weights length mismatch")
-	ErrNonPositiveWeight  = errors.New("all weights must be > 0")
-)
-
 // WeightedSampleWithoutReplacement selects k distinct items
 // with probability proportional to weights (w_i > 0).
 // Complexity: O(n log k) with a fixed-size max-heap.
@@ -332,12 +329,21 @@ type esPair struct {
 // esMaxHeap is a max-heap by key.
 type esMaxHeap []esPair
 
-func (h *esMaxHeap) Len() int           { return len(ptrutils.Deref(h)) }
-func (h *esMaxHeap) Less(i, j int) bool { return ptrutils.Deref(h)[i].key > ptrutils.Deref(h)[j].key } // max-heap
+func (h *esMaxHeap) Len() int {
+	return len(ptrutils.Deref(h))
+}
+
+func (h *esMaxHeap) Less(i, j int) bool {
+	return ptrutils.Deref(h)[i].key > ptrutils.Deref(h)[j].key
+} // max-heap
+
 func (h *esMaxHeap) Swap(i, j int) {
 	ptrutils.Deref(h)[i], ptrutils.Deref(h)[j] = ptrutils.Deref(h)[j], ptrutils.Deref(h)[i]
 }
-func (h *esMaxHeap) Push(x any) { *h = append(*h, x.(esPair)) }
+func (h *esMaxHeap) Push(x any) {
+	*h = append(*h, x.(esPair))
+}
+
 func (h *esMaxHeap) Pop() any {
 	old := *h
 	n := len(old)
@@ -383,10 +389,14 @@ type SplitMix64 struct {
 }
 
 // NewSplitMix64 seeds with a 64-bit value.
-func NewSplitMix64(seed uint64) *SplitMix64 { return &SplitMix64{state: seed} }
+func NewSplitMix64(seed uint64) *SplitMix64 {
+	return &SplitMix64{state: seed}
+}
 
 // Seed implements rand.Source.
-func (s *SplitMix64) Seed(seed int64) { s.state = uint64(seed) }
+func (s *SplitMix64) Seed(seed int64) {
+	s.state = uint64(seed)
+}
 
 // Uint64 implements rand.Source64.
 func (s *SplitMix64) Uint64() uint64 {
@@ -400,7 +410,9 @@ func (s *SplitMix64) Uint64() uint64 {
 }
 
 // Int63 implements rand.Source.
-func (s *SplitMix64) Int63() int64 { return int64(s.Uint64() >> 1) }
+func (s *SplitMix64) Int63() int64 {
+	return int64(s.Uint64() >> 1)
+}
 
 // NewRandSplitMix64 returns *rand.Rand backed by SplitMix64.
 func NewRandSplitMix64(seed int64) *mrand.Rand {

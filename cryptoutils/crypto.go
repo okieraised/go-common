@@ -8,7 +8,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/hmac"
-	crypto_rand "crypto/rand"
+	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -26,7 +26,7 @@ import (
 
 func RandomBytes(n int) ([]byte, error) {
 	b := make([]byte, n)
-	_, err := io.ReadFull(crypto_rand.Reader, b)
+	_, err := io.ReadFull(cryptorand.Reader, b)
 	return b, err
 }
 
@@ -279,7 +279,7 @@ type KeyPair[P any, S any] struct {
 
 // GenerateKeyPair is a generic wrapper around a key generation function.
 func GenerateKeyPair[P any, S any](fn func(io.Reader) (P, S, error)) (KeyPair[P, S], error) {
-	pub, priv, err := fn(crypto_rand.Reader)
+	pub, priv, err := fn(cryptorand.Reader)
 	return KeyPair[P, S]{Public: pub, Private: priv}, err
 }
 
@@ -314,7 +314,7 @@ func Ed25519Verify(pub ed25519.PublicKey, msg, sig []byte) bool {
 func RSASign(priv *rsa.PrivateKey, msg []byte, h crypto.Hash) ([]byte, error) {
 	hasher := h.New()
 	hasher.Write(msg)
-	return rsa.SignPKCS1v15(crypto_rand.Reader, priv, h, hasher.Sum(nil))
+	return rsa.SignPKCS1v15(cryptorand.Reader, priv, h, hasher.Sum(nil))
 }
 
 func RSAVerify(pub *rsa.PublicKey, msg, sig []byte, h crypto.Hash) error {
@@ -327,7 +327,7 @@ func ECDSASign(priv *ecdsa.PrivateKey, msg []byte, h crypto.Hash) ([]byte, error
 	hasher := h.New()
 	hasher.Write(msg)
 	digest := hasher.Sum(nil)
-	return ecdsa.SignASN1(crypto_rand.Reader, priv, digest)
+	return ecdsa.SignASN1(cryptorand.Reader, priv, digest)
 }
 
 func ECDSAVerify(pub *ecdsa.PublicKey, msg, sig []byte, h crypto.Hash) bool {

@@ -5,7 +5,7 @@ import (
 	"github.com/okieraised/go-common/api_response"
 	"github.com/okieraised/go-common/cerrors"
 	"github.com/okieraised/go-common/constants"
-	"github.com/okieraised/go-common/infrastructures/logger"
+	"github.com/okieraised/go-common/infrastructures/logging"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -15,11 +15,11 @@ type HealthCheckResponse struct {
 }
 
 type Router struct {
-	logger *logger.Logger
+	logger *logging.Logger
 	tracer trace.Tracer
 }
 
-func NewHealthcheckRouter(logger *logger.Logger, tr trace.Tracer) *Router {
+func NewHealthcheckRouter(logger *logging.Logger, tr trace.Tracer) *Router {
 	return &Router{
 		logger: logger,
 		tracer: tr,

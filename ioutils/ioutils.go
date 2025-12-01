@@ -3,6 +3,7 @@ package ioutils
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -34,15 +35,15 @@ func CopyContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, erro
 				return
 			default:
 			}
-			n, rerr := src.Read(buf)
+			n, err := src.Read(buf)
 			if n > 0 {
-				if _, werr := pw.Write(buf[:n]); werr != nil {
+				if _, err = pw.Write(buf[:n]); err != nil {
 					return
 				}
 			}
-			if rerr != nil {
-				if rerr != io.EOF {
-					_ = pw.CloseWithError(rerr)
+			if err != nil {
+				if err != io.EOF {
+					_ = pw.CloseWithError(err)
 				}
 				return
 			}
@@ -51,8 +52,7 @@ func CopyContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, erro
 	return io.Copy(dst, pr)
 }
 
-// CopyWithProgress copies and calls cb(totalBytes) after each chunk.
-// If cb returns error, copying stops and that error is returned.
+// CopyWithProgress copies and calls cb(totalBytes) after each chunk. If cb returns an error, copying stops and that error is returned.
 func CopyWithProgress(dst io.Writer, src io.Reader, cb func(written int64) error) (int64, error) {
 	var written int64
 	buf := make([]byte, 32*1024)
@@ -82,10 +82,7 @@ func CopyWithProgress(dst io.Writer, src io.Reader, cb func(written int64) error
 	}
 }
 
-// ReadAllLimit reads up to limit bytes into memory. If the stream exceeds the
-// limit, it returns an error without consuming more than limit.
-var ErrTooLarge = errors.New("ioutils: input too large")
-
+// ReadAllLimit reads up-to-limit bytes into memory. If the stream exceeds the limit, it returns an error without consuming more than the limit.
 func ReadAllLimit(r io.Reader, limit int64) ([]byte, error) {
 	if limit <= 0 {
 		return io.ReadAll(r)
@@ -100,27 +97,10 @@ func ReadAllLimit(r io.Reader, limit int64) ([]byte, error) {
 	// return EOF. We detect “truncation” by peeking one extra byte.
 	var one [1]byte
 	if n, _ := r.Read(one[:]); n > 0 {
-		return nil, ErrTooLarge
+		return nil, errors.New("input too large")
 	}
 	return []byte(sb.String()[:written]), nil
 }
-
-// TeeReadCloser behaves like io.TeeReader but closes the underlying reader.
-type TeeReadCloser struct {
-	R io.ReadCloser
-	W io.Writer
-}
-
-func (t *TeeReadCloser) Read(p []byte) (int, error) {
-	n, err := t.R.Read(p)
-	if n > 0 {
-		if _, ew := t.W.Write(p[:n]); ew != nil && err == nil {
-			err = ew
-		}
-	}
-	return n, err
-}
-func (t *TeeReadCloser) Close() error { return t.R.Close() }
 
 // NopWriteCloser wraps an io.Writer to satisfy io.WriteCloser.
 type nopWriteCloser struct{ io.Writer }
@@ -153,7 +133,7 @@ func EnsureDir(dir string, perm fs.FileMode) error {
 	return os.MkdirAll(dir, perm)
 }
 
-// WriteFileAtomic writes data to path atomically by using a temp file + rename.
+// WriteFileAtomic writes data to a path atomically by using a temp file + rename.
 // It ensures the parent directory exists. Set fsync=true to fsync the temp file.
 func WriteFileAtomic(path string, data []byte, perm fs.FileMode, fsync bool) error {
 	dir := filepath.Dir(path)
@@ -182,7 +162,7 @@ func WriteFileAtomic(path string, data []byte, perm fs.FileMode, fsync bool) err
 }
 
 // ReplaceFile attempts to atomically replace dst with src via rename.
-// If rename fails due to cross-device link, it falls back to copy+rename.
+// If rename fails due to a cross-device link, it falls back to copy+rename.
 func ReplaceFile(dst, src string) error {
 	if err := os.Rename(src, dst); err == nil {
 		return nil
@@ -219,7 +199,7 @@ func ReplaceFile(dst, src string) error {
 	}
 }
 
-// DirSize walks dir and returns total size of regular files.
+// DirSize walks dir and returns the total size of regular files.
 func DirSize(root string) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
@@ -238,7 +218,7 @@ func DirSize(root string) (int64, error) {
 	return total, err
 }
 
-// WalkFiles calls fn for each regular file under root that matches match(path, info).
+// WalkFiles calls fn for each regular file under the root that matches match(path, info).
 // If match is nil, all regular files are visited.
 func WalkFiles(root string, match func(path string, info fs.FileInfo) bool, fn func(path string, info fs.FileInfo) error) error {
 	return filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
@@ -252,7 +232,7 @@ func WalkFiles(root string, match func(path string, info fs.FileInfo) bool, fn f
 	})
 }
 
-// AppendFileWithDir appends data to a file, creating parent dir as needed.
+// AppendFileWithDir appends data to a file, creating the parent dir as needed.
 func AppendFileWithDir(path string, data []byte, perm fs.FileMode) error {
 	if err := EnsureDir(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -261,11 +241,11 @@ func AppendFileWithDir(path string, data []byte, perm fs.FileMode) error {
 	if err != nil {
 		return err
 	}
-	_, werr := f.Write(data)
-	if cerr := f.Close(); werr == nil {
-		werr = cerr
+	_, wErr := f.Write(data)
+	if cErr := f.Close(); wErr == nil {
+		wErr = cErr
 	}
-	return werr
+	return wErr
 }
 
 // WriteFileSync creates/truncates and fsyncs a file.
@@ -377,16 +357,16 @@ func UntarToDir(r io.Reader, dst string) error {
 			if err := EnsureDir(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
-			f, e := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, fs.FileMode(hdr.Mode))
-			if e != nil {
-				return e
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, fs.FileMode(hdr.Mode))
+			if err != nil {
+				return err
 			}
-			_, e = io.Copy(f, tr)
-			if ce := f.Close(); e == nil {
-				e = ce
+			_, err = io.Copy(f, tr)
+			if ce := f.Close(); err == nil {
+				err = ce
 			}
-			if e != nil {
-				return e
+			if err != nil {
+				return err
 			}
 		default:
 			// skip symlinks and others for safety
@@ -410,10 +390,10 @@ func ReadLines(r io.Reader) ([]string, error) {
 // ScanLinesChan streams lines from r on a channel. Close the done channel to stop early.
 func ScanLinesChan(r io.Reader, done <-chan struct{}) (<-chan string, <-chan error) {
 	out := make(chan string, 128)
-	errc := make(chan error, 1)
+	cErr := make(chan error, 1)
 	go func() {
 		defer close(out)
-		defer close(errc)
+		defer close(cErr)
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 		for sc.Scan() {
@@ -423,9 +403,9 @@ func ScanLinesChan(r io.Reader, done <-chan struct{}) (<-chan string, <-chan err
 			case out <- sc.Text():
 			}
 		}
-		errc <- sc.Err()
+		cErr <- sc.Err()
 	}()
-	return out, errc
+	return out, cErr
 }
 
 type JSONLinesWriter struct {
@@ -504,4 +484,91 @@ func TryLockFile(path string) (func() error, bool, error) {
 		return nil, false, nil
 	}
 	return nil, false, err
+}
+
+type WriterSeeker struct {
+	buf bytes.Buffer
+	pos int
+}
+
+// Write writings to the buffer of this WriterSeeker instance
+func (ws *WriterSeeker) Write(p []byte) (n int, err error) {
+	// If the offset is past the end of the buffer, grow the buffer with null bytes.
+	if extra := ws.pos - ws.buf.Len(); extra > 0 {
+		if _, err := ws.buf.Write(make([]byte, extra)); err != nil {
+			return n, err
+		}
+	}
+
+	// If the offset isn't at the end of the buffer, write as much as we can.
+	if ws.pos < ws.buf.Len() {
+		n = copy(ws.buf.Bytes()[ws.pos:], p)
+		p = p[n:]
+	}
+
+	// If there are remaining bytes, append them to the buffer.
+	if len(p) > 0 {
+		var bn int
+		bn, err = ws.buf.Write(p)
+		n += bn
+	}
+
+	ws.pos += n
+	return n, err
+}
+
+// Seek seeks in the buffer of this WriterSeeker instance
+func (ws *WriterSeeker) Seek(offset int64, whence int) (int64, error) {
+	newPos, offs := 0, int(offset)
+	switch whence {
+	case io.SeekStart:
+		newPos = offs
+	case io.SeekCurrent:
+		newPos = ws.pos + offs
+	case io.SeekEnd:
+		newPos = ws.buf.Len() + offs
+	}
+	if newPos < 0 {
+		return 0, errors.New("negative result pos")
+	}
+	ws.pos = newPos
+	return int64(newPos), nil
+}
+
+// Reader returns an io.Reader. Use it, for example, with io.Copy, to copy the content of the WriterSeeker buffer to an io.Writer
+func (ws *WriterSeeker) Reader() io.Reader {
+	return bytes.NewReader(ws.buf.Bytes())
+}
+
+// Close :
+func (ws *WriterSeeker) Close() error {
+	return nil
+}
+
+// BytesReader returns a *byte.Reader. Use it when you need a reader that implements the io.ReadSeeker interface
+func (ws *WriterSeeker) BytesReader() *bytes.Reader {
+	return bytes.NewReader(ws.buf.Bytes())
+}
+
+func (ws *WriterSeeker) Size() int64 {
+	return int64(ws.buf.Len())
+}
+
+// TeeReadCloser behaves like io.TeeReader but closes the underlying reader.
+type TeeReadCloser struct {
+	R io.ReadCloser
+	W io.Writer
+}
+
+func (t *TeeReadCloser) Read(p []byte) (int, error) {
+	n, err := t.R.Read(p)
+	if n > 0 {
+		if _, ew := t.W.Write(p[:n]); ew != nil && err == nil {
+			err = ew
+		}
+	}
+	return n, err
+}
+func (t *TeeReadCloser) Close() error {
+	return t.R.Close()
 }

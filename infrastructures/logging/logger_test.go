@@ -1,4 +1,4 @@
-package logger
+package logging
 
 import (
 	"testing"
@@ -7,11 +7,11 @@ import (
 )
 
 func TestInitDefault(t *testing.T) {
-	GetDefault().Error("test init default")
+	Get().Error("test init default")
 }
 
 func TestLogger_With(t *testing.T) {
-	l := GetDefault()
+	l := Get()
 
 	l1 := l.With(zap.String("x", "y"))
 	l1.Info("test logger 1")

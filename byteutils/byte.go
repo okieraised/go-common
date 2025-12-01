@@ -100,16 +100,10 @@ var (
 	reSize = regexp.MustCompile(`^\s*([+-]?\d+(?:\.\d+)?)\s*([a-zA-Z]+)?\s*$`)
 
 	unitMap = map[string]int64{
-		"b": 1,
-
-		// SI long
+		"b":  1,
 		"kb": KB, "mb": MB, "gb": GB, "tb": TB, "pb": PB, "eb": EB,
-		// SI short
 		"k": KB, "m": MB, "g": GB, "t": TB, "p": PB, "e": EB,
-
-		// IEC long
 		"kib": KiB, "mib": MiB, "gib": GiB, "tib": TiB, "pib": PiB, "eib": EiB,
-		// IEC short (common typos/variants)
 		"ki": KiB, "mi": MiB, "gi": GiB, "ti": TiB, "pi": PiB, "ei": EiB,
 	}
 )
@@ -130,7 +124,6 @@ func ParseBytes(s string) (int64, error) {
 
 	// default to bytes if no unit given
 	if unitStr == "" {
-		// allow fractional but floor toward zero
 		return int64(v), nil
 	}
 

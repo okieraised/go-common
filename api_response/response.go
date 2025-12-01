@@ -26,7 +26,7 @@ type Response[T any] struct {
 	Meta          map[string]any `json:"meta,omitempty"`
 }
 
-// Pagination is a common meta payload for list endpoints.
+// Pagination is a common meta-payload for list endpoints.
 type Pagination struct {
 	Page       int   `json:"page"`
 	PerPage    int   `json:"per_page"`
@@ -78,10 +78,26 @@ func FromError[T any](ctx context.Context, code string, err error) *Response[T] 
 	return resp
 }
 
-func (r *Response[T]) WithCode(c string) *Response[T]    { r.Code = c; return r }
-func (r *Response[T]) WithMessage(m string) *Response[T] { r.Message = m; return r }
-func (r *Response[T]) WithCount(n int) *Response[T]      { r.Count = n; return r }
-func (r *Response[T]) WithAgg(agg any) *Response[T]      { r.Agg = agg; return r }
+func (r *Response[T]) WithCode(c string) *Response[T] {
+	r.Code = c
+	return r
+}
+
+func (r *Response[T]) WithMessage(m string) *Response[T] {
+	r.Message = m
+	return r
+}
+
+func (r *Response[T]) WithCount(n int) *Response[T] {
+	r.Count = n
+	return r
+}
+
+func (r *Response[T]) WithAgg(agg any) *Response[T] {
+	r.Agg = agg
+	return r
+}
+
 func (r *Response[T]) WithMetaKV(k string, v any) *Response[T] {
 	if r.Meta == nil {
 		r.Meta = make(map[string]any)
@@ -105,8 +121,7 @@ func (r *Response[T]) WithPagination(p Pagination) *Response[T] {
 	return r.WithMetaKV("pagination", p)
 }
 
-// Populate keeps parity with your original method signature.
-// Prefer fluent setters in new code.
+// Populate keeps parity with your original method signature. Prefer fluent setters in new code.
 func (r *Response[T]) Populate(code, message string, data T, meta any, count any) *Response[T] {
 	r.Code = code
 	r.Message = message

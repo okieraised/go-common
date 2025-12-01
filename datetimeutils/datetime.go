@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/okieraised/go-common/cerrors"
 )
 
 // CommonLayouts is a curated list of practical formats tried by ParseAny.
@@ -61,7 +59,7 @@ func ParseAny(s string, loc *time.Location, layouts ...string) (time.Time, error
 	}
 	// try time.Parse first (it respects zones when present)
 	for _, layout := range ls {
-		// If layout contains 'Z07:00' or MST, use time.Parse; else ParseInLocation
+		// If the layout contains 'Z07:00' or MST, use time.Parse; else ParseInLocation
 		if strings.Contains(layout, "Z07") || strings.Contains(layout, "MST") {
 			if t, err := time.Parse(layout, s); err == nil {
 				return t, nil
@@ -71,7 +69,7 @@ func ParseAny(s string, loc *time.Location, layouts ...string) (time.Time, error
 			return t, nil
 		}
 	}
-	return time.Time{}, fmt.Errorf("%w: %q", cerrors.ErrNoFormatMatched, s)
+	return time.Time{}, fmt.Errorf("no format matched: %q", s)
 }
 
 // StartOfDay returns 00:00:00.000 in loc.
@@ -235,7 +233,7 @@ func AddBusinessDays(t time.Time, k int, holidays *HolidaySet) time.Time {
 			k--
 		}
 	}
-	// keep original wall time-of-day
+	// keep the original wall time-of-day
 	h, m, s := t.Clock()
 	return time.Date(ti.Year(), ti.Month(), ti.Day(), h, m, s, t.Nanosecond(), holidays.loc)
 }
@@ -401,7 +399,7 @@ func ParseDurationFlexible(s string) (time.Duration, error) {
 			return 0, fmt.Errorf("unknown unit %q", word)
 		}
 	}
-	// trailing number without unit? reject, to avoid silent mistakes
+	// trailing number without a unit? reject, to avoid silent mistakes
 	if num != "" {
 		return 0, fmt.Errorf("dangling number %q without unit", num)
 	}
@@ -430,7 +428,7 @@ func FromUnixMicros(us int64, loc *time.Location) time.Time {
 }
 
 // ExpoBackoff returns a function that yields an exponential backoff duration
-// with optional full jitter. Example: base=100ms, factor=2, max=10s.
+// with an optional full jitter. Example: base=100ms, factor=2, max=10s.
 // If jitter=true, each call returns rand in [0, backoff] (AWS "Full Jitter").
 // If jitter=false, returns the deterministic backoff.
 func ExpoBackoff(base time.Duration, factor float64, max time.Duration, jitter bool, r *rand.Rand) func(int) time.Duration {
@@ -532,8 +530,7 @@ func NewBucketIterator(start, end time.Time, step time.Duration, alignFn func(ti
 	}
 	s0 := alignFn(start)
 	if s0.Before(start) {
-		// move to the first bucket that overlaps start
-		// ceil to next boundary: aligned + k*step >= start
+		// move to the first bucket that overlaps start ceil to the next boundary: aligned + k*step >= start
 		delta := start.Sub(s0)
 		k := int64((delta + step - 1) / step)
 		s0 = s0.Add(time.Duration(k) * step)

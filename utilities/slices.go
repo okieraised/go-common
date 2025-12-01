@@ -395,7 +395,7 @@ func Shift[T any](s []T) (head T, rest []T, ok bool) {
 }
 
 // SwapRemove removes an element at i by swapping it with the last element (O(1), not stable).
-// Returns removed element, new slice, and ok=false if i out of range.
+// Returns a removed element, new slice, and ok=false if i out of range.
 func SwapRemove[T any](s []T, i int) (removed T, rest []T, ok bool) {
 	if i < 0 || i >= len(s) {
 		var zero T

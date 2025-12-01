@@ -6,6 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/okieraised/go-common/cerrors"
+	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	"go.opentelemetry.io/otel"
@@ -34,11 +37,36 @@ type Options struct {
 	Timeout     time.Duration
 }
 
-// Init initializes a process-wide tracer provider exactly once.
-// It returns a Shutdown function to flush/close the provider.
-func Init(opt *Options) (func(ctx context.Context) error, error) {
+type Option func(*Options)
+
+func WithEndpoint(ep string) Option {
+	return func(o *Options) { o.Endpoint = ep }
+}
+
+func WithInsecure(insecure bool) Option {
+	return func(o *Options) { o.Insecure = insecure }
+}
+
+func WithServiceName(name string) Option {
+	return func(o *Options) { o.ServiceName = name }
+}
+
+func WithNamespace(ns string) Option {
+	return func(o *Options) { o.Namespace = ns }
+}
+
+func WithTimeout(d time.Duration) Option {
+	return func(o *Options) { o.Timeout = d }
+}
+
+func NewTracerClient(opts ...Option) (func(ctx context.Context) error, error) {
 	var initErr error
 	once.Do(func() {
+		opt := Options{}
+		for _, o := range opts {
+			o(&opt)
+		}
+
 		if opt.Timeout <= 0 {
 			opt.Timeout = 10 * time.Second
 		}
@@ -46,16 +74,25 @@ func Init(opt *Options) (func(ctx context.Context) error, error) {
 		defer cancel()
 
 		grpcOpts := []grpc.DialOption{
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{PermitWithoutStream: true}),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                10 * time.Second,
+				Timeout:             20 * time.Second,
+				PermitWithoutStream: true,
+			}),
 		}
 		if opt.Insecure {
 			grpcOpts = append(grpcOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		}
-
-		traceClient := otlptracegrpc.NewClient(
+		traceOpts := []otlptracegrpc.Option{
 			otlptracegrpc.WithEndpoint(opt.Endpoint),
 			otlptracegrpc.WithDialOption(grpcOpts...),
-		)
+		}
+
+		if opt.Insecure {
+			traceOpts = append(traceOpts, otlptracegrpc.WithInsecure())
+		}
+
+		traceClient := otlptracegrpc.NewClient(traceOpts...)
 
 		exp, err := otlptrace.New(ctx, traceClient)
 		if err != nil {
@@ -105,9 +142,9 @@ func Init(opt *Options) (func(ctx context.Context) error, error) {
 	return Shutdown, nil
 }
 
-// MustInit panics on error.
-func MustInit(opt *Options) func(ctx context.Context) error {
-	shutdown, err := Init(opt)
+// MustTracerClient panics on error.
+func MustTracerClient(opts ...Option) func(ctx context.Context) error {
+	shutdown, err := NewTracerClient(opts...)
 	if err != nil {
 		panic(err)
 	}
@@ -130,4 +167,33 @@ func Shutdown(ctx context.Context) error {
 	err := tp.Shutdown(ctx)
 	tp = nil
 	return err
+}
+
+func normalizeError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var appErr *cerrors.AppError
+	if errors.As(err, &appErr) && appErr == nil {
+		return nil
+	}
+	return err
+}
+
+func SpanWithResultErr[T any](ctx context.Context, tracer trace.Tracer, name string, fn func(context.Context) (T, error)) (T, error) {
+	ctx, span := tracer.Start(ctx, name)
+	defer span.End()
+
+	result, err := fn(ctx)
+	err = normalizeError(err)
+
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
+
+	return result, err
 }

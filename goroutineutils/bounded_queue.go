@@ -4,7 +4,12 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/okieraised/go-common/cerrors"
+	"github.com/pkg/errors"
+)
+
+var (
+	ErrQueueClosed      = errors.New("queue closed")
+	ErrQueueFullDropped = errors.New("queue full, dropped item")
 )
 
 type OverflowPolicy int
@@ -40,11 +45,11 @@ func NewBoundedQueue[T any](capacity int, policy OverflowPolicy) *BoundedQueue[T
 
 // Send enqueues v. Behavior on full depends on policy.
 // - Block: blocks until space or ctx done/closed
-// - DropLatest: returns cerrors.ErrQueueFullDropped immediately if full
+// - DropLatest: returns ErrQueueFullDropped immediately if full
 // - DropOldest: discards one buffered item if full, then enqueues
 func (q *BoundedQueue[T]) Send(ctx context.Context, v T) error {
 	if q.closed.Load() {
-		return cerrors.ErrQueueClosed
+		return ErrQueueClosed
 	}
 	switch q.policy {
 	case Block:
@@ -60,7 +65,7 @@ func (q *BoundedQueue[T]) Send(ctx context.Context, v T) error {
 			return nil
 		default:
 			q.dropped.Add(1)
-			return cerrors.ErrQueueFullDropped
+			return ErrQueueFullDropped
 		}
 	case DropOldest:
 		select {
@@ -80,7 +85,7 @@ func (q *BoundedQueue[T]) Send(ctx context.Context, v T) error {
 			default:
 				// nothing to drop (race): treat as drop-latest
 				q.dropped.Add(1)
-				return cerrors.ErrQueueClosed
+				return ErrQueueClosed
 			}
 		}
 	default:
@@ -147,8 +152,8 @@ func (q *BoundedQueue[T]) Recv(ctx context.Context) (zero T, v T, ok bool, err e
 	}
 }
 
-// Close closes the queue once. Further sends fail with cerrors.ErrQueueClosed.
-// Receivers will drain remaining items until channel closes.
+// Close closes the queue at once. Further sends fail with cerrors.ErrQueueClosed.
+// Receivers will drain remaining items until a channel closes.
 func (q *BoundedQueue[T]) Close() {
 	if q.closed.CompareAndSwap(false, true) {
 		close(q.ch)

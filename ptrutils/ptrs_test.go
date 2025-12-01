@@ -37,31 +37,6 @@ func TestPtrAndDeref(t *testing.T) {
 	mustPanic(t, func() { _ = Deref[int](nil) })
 }
 
-//func TestPtrOrNil(t *testing.T) {
-//	if got := PtrOrNil; got != nil {
-//		t.Fatalf("PtrOrNil zero int: got non-nil")
-//	}
-//	if got := PtrOrNil[string](""); got != nil {
-//		t.Fatalf("PtrOrNil zero string: got non-nil")
-//	}
-//	s := cmpStruct{} // zero
-//	if got := PtrOrNil(s); got != nil {
-//		t.Fatalf("PtrOrNil zero struct: got non-nil")
-//	}
-//
-//	if got := PtrOrNil; got == nil || *got != 5 {
-//		t.Fatalf("PtrOrNil non-zero int: got %v,*=%v", got, func() any {
-//			if got == nil {
-//				return nil
-//			}
-//			return *got
-//		}())
-//	}
-//	if got := PtrOrNil[string]("x"); got == nil || *got != "x" {
-//		t.Fatalf("PtrOrNil non-zero string: got %v", got)
-//	}
-//}
-
 func TestDerefZero(t *testing.T) {
 	if got := DerefZero[int](nil); got != 0 {
 		t.Fatalf("DerefZero(nil int) = %v, want 0", got)
