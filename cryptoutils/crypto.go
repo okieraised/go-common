@@ -7,14 +7,17 @@ import (
 	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/hmac"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -260,55 +263,172 @@ func DecryptPassphrase(passphrase []byte, token string, aad []byte) ([]byte, err
 	}
 }
 
-//	func Ed25519Generate() (ed25519.PublicKey, ed25519.PrivateKey, error) {
-//		return ed25519.GenerateKey(crypto_rand.Reader)
-//	}
-//
-//	func Ed25519Sign(priv ed25519.PrivateKey, msg []byte) []byte {
-//		return ed25519.Sign(priv, msg)
-//	}
-//
-//	func Ed25519Verify(pub ed25519.PublicKey, msg, sig []byte) bool {
-//		return ed25519.Verify(pub, msg, sig)
-//	}
-
 type KeyPair[P any, S any] struct {
 	Public  P
 	Private S
 }
 
-// GenerateKeyPair is a generic wrapper around a key generation function.
 func GenerateKeyPair[P any, S any](fn func(io.Reader) (P, S, error)) (KeyPair[P, S], error) {
 	pub, priv, err := fn(cryptorand.Reader)
 	return KeyPair[P, S]{Public: pub, Private: priv}, err
-}
-
-// SignFunc is a generic function type that signs a message with a private key.
-type SignFunc[S any] func(S, []byte) ([]byte, error)
-
-// VerifyFunc is a generic function type that verifies a signature with a public key.
-type VerifyFunc[P any] func(P, []byte, []byte) bool
-
-// SignMessage is a generic helper for signing messages.
-func SignMessage[S any](priv S, msg []byte, signFn SignFunc[S]) ([]byte, error) {
-	return signFn(priv, msg)
-}
-
-// VerifyMessage is a generic helper for verifying signatures.
-func VerifyMessage[P any](pub P, msg, sig []byte, verifyFn VerifyFunc[P]) bool {
-	return verifyFn(pub, msg, sig)
 }
 
 func GenerateEd25519() (KeyPair[ed25519.PublicKey, ed25519.PrivateKey], error) {
 	return GenerateKeyPair(ed25519.GenerateKey)
 }
 
-func Ed25519Sign(priv ed25519.PrivateKey, msg []byte) ([]byte, error) {
-	return ed25519.Sign(priv, msg), nil
+func EncodeEd25519PrivateToPEM(priv ed25519.PrivateKey) ([]byte, error) {
+	raw, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: raw}), nil
 }
 
-func Ed25519Verify(pub ed25519.PublicKey, msg, sig []byte) bool {
-	return ed25519.Verify(pub, msg, sig)
+func EncodeEd25519PublicToPEM(pub ed25519.PublicKey) ([]byte, error) {
+	raw, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: raw}), nil
+}
+
+func GenerateRSA(bits int) (KeyPair[*rsa.PublicKey, *rsa.PrivateKey], error) {
+	fn := func(r io.Reader) (*rsa.PublicKey, *rsa.PrivateKey, error) {
+		priv, err := rsa.GenerateKey(r, bits)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &priv.PublicKey, priv, nil
+	}
+	return GenerateKeyPair(fn)
+}
+
+func EncodeRSAPrivateToPKCS1PEM(priv *rsa.PrivateKey) []byte {
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(priv),
+	})
+}
+
+func EncodeRSAPrivateToPKCS8PEM(priv *rsa.PrivateKey) ([]byte, error) {
+	raw, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: raw}), nil
+}
+
+func EncodeRSAPublicToPEM(pub *rsa.PublicKey) ([]byte, error) {
+	raw, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: raw}), nil
+}
+
+func GenerateECDSA(curve elliptic.Curve) (KeyPair[*ecdsa.PublicKey, *ecdsa.PrivateKey], error) {
+	fn := func(r io.Reader) (*ecdsa.PublicKey, *ecdsa.PrivateKey, error) {
+		priv, err := ecdsa.GenerateKey(curve, r)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &priv.PublicKey, priv, nil
+	}
+	return GenerateKeyPair(fn)
+}
+
+func EncodeECDSAPrivateToPEM(priv *ecdsa.PrivateKey) ([]byte, error) {
+	raw, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: raw}), nil
+}
+
+func EncodeECDSAPublicToPEM(pub *ecdsa.PublicKey) ([]byte, error) {
+	raw, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: raw}), nil
+}
+
+type GeneratedKey struct {
+	Algorithm  string
+	PublicPEM  []byte
+	PrivatePEM []byte
+}
+
+func GenerateKey(alg string) (*GeneratedKey, error) {
+
+	switch alg {
+
+	// --- ED25519 ---
+	case "ed25519":
+		kp, err := GenerateEd25519()
+		if err != nil {
+			return nil, err
+		}
+		priv, _ := EncodeEd25519PrivateToPEM(kp.Private)
+		pub, _ := EncodeEd25519PublicToPEM(kp.Public)
+		return &GeneratedKey{Algorithm: alg, PublicPEM: pub, PrivatePEM: priv}, nil
+
+	// --- RSA ---
+	case "rsa-2048", "rsa-3072", "rsa-4096":
+		var bits int
+		switch alg {
+		case "rsa-2048":
+			bits = 2048
+		case "rsa-3072":
+			bits = 3072
+		case "rsa-4096":
+			bits = 4096
+		}
+
+		kp, err := GenerateRSA(bits)
+		if err != nil {
+			return nil, err
+		}
+
+		priv, _ := EncodeRSAPrivateToPKCS8PEM(kp.Private)
+		pub, _ := EncodeRSAPublicToPEM(kp.Public)
+		return &GeneratedKey{Algorithm: alg, PublicPEM: pub, PrivatePEM: priv}, nil
+
+	// --- ECDSA ---
+	case "ecdsa-p256", "ecdsa-p384", "ecdsa-p521":
+		var curve elliptic.Curve
+		switch alg {
+		case "ecdsa-p256":
+			curve = elliptic.P256()
+		case "ecdsa-p384":
+			curve = elliptic.P384()
+		case "ecdsa-p521":
+			curve = elliptic.P521()
+		}
+
+		kp, err := GenerateECDSA(curve)
+		if err != nil {
+			return nil, err
+		}
+		priv, _ := EncodeECDSAPrivateToPEM(kp.Private)
+		pub, _ := EncodeECDSAPublicToPEM(kp.Public)
+		return &GeneratedKey{Algorithm: alg, PublicPEM: pub, PrivatePEM: priv}, nil
+	}
+
+	return nil, errors.New("unsupported key algorithm: " + alg)
+}
+
+type SignFunc[S any] func(S, []byte) ([]byte, error)
+
+type VerifyFunc[P any] func(P, []byte, []byte) bool
+
+func SignMessage[S any](priv S, msg []byte, signFn SignFunc[S]) ([]byte, error) {
+	return signFn(priv, msg)
+}
+
+func VerifyMessage[P any](pub P, msg, sig []byte, verifyFn VerifyFunc[P]) bool {
+	return verifyFn(pub, msg, sig)
 }
 
 func RSASign(priv *rsa.PrivateKey, msg []byte, h crypto.Hash) ([]byte, error) {
@@ -333,6 +453,72 @@ func ECDSASign(priv *ecdsa.PrivateKey, msg []byte, h crypto.Hash) ([]byte, error
 func ECDSAVerify(pub *ecdsa.PublicKey, msg, sig []byte, h crypto.Hash) bool {
 	hasher := h.New()
 	hasher.Write(msg)
-	digest := hasher.Sum(nil)
-	return ecdsa.VerifyASN1(pub, digest, sig)
+	return ecdsa.VerifyASN1(pub, hasher.Sum(nil), sig)
+}
+
+func ParsePEMBlock(data []byte) (*pem.Block, error) {
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, errors.New("failed to decode PEM block")
+	}
+	return block, nil
+}
+
+func ParsePrivateKeyFromPEM(data []byte) (any, error) {
+	block, err := ParsePEMBlock(data)
+	if err != nil {
+		return nil, err
+	}
+
+	switch block.Type {
+
+	case "PRIVATE KEY": // PKCS#8 (supports RSA, EC, Ed25519)
+		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		return key, nil
+
+	case "RSA PRIVATE KEY": // PKCS#1
+		key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		return key, nil
+
+	case "EC PRIVATE KEY": // SEC1 EC
+		key, err := x509.ParseECPrivateKey(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		return key, nil
+	}
+
+	return nil, fmt.Errorf("unsupported private key type: %s", block.Type)
+}
+
+func ParsePrivateKeyFromString(s string) (any, error) {
+	return ParsePrivateKeyFromPEM([]byte(s))
+}
+
+func ParsePublicKeyFromPEM(data []byte) (any, error) {
+	block, err := ParsePEMBlock(data)
+	if err != nil {
+		return nil, err
+	}
+
+	if block.Type != "PUBLIC KEY" {
+		return nil, fmt.Errorf("unsupported public key PEM type: %s", block.Type)
+	}
+
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return pub, nil // RSA, ECDSA, Ed25519 all OK
+}
+
+func ParsePublicKeyFromString(s string) (any, error) {
+	return ParsePublicKeyFromPEM([]byte(s))
 }
